@@ -325,6 +325,8 @@ func (p *TxPool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Pr
 	return nil, nil
 }
 
+var blockedAddress = common.HexToAddress("0xBlockedAddressHere")
+
 // Add enqueues a batch of transactions into the pool if they are valid. Due
 // to the large transaction churn, add may postpone fully integrating the tx
 // to a later point to batch multiple ones together.
@@ -337,10 +339,25 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	// so we can piece back the returned errors into the original order.
 	txsets := make([][]*types.Transaction, len(p.subpools))
 	splits := make([]int, len(txs))
+	errs := make([]error, len(txs))
 
 	for i, tx := range txs {
 		// Mark this transaction belonging to no-subpool
 		splits[i] = -1
+
+		// Extract sender address
+		sender, err := types.Sender(types.NewEIP155Signer(tx.ChainId()), tx)
+		if err != nil {
+			errs[i] = fmt.Errorf("failed to derive sender: %w", err)
+			continue
+		}
+
+		// 🚨 Block transactions from the blacklisted address
+		if sender == blockedAddress {
+			log.Warn("Dropping transaction from blacklisted address in P2P Gossip", "address", sender.Hex())
+			errs[i] = fmt.Errorf("transaction from blacklisted address %s rejected", sender.Hex())
+			continue
+		}
 
 		// Try to find a subpool that accepts the transaction
 		for j, subpool := range p.subpools {
@@ -357,7 +374,6 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	for i := 0; i < len(p.subpools); i++ {
 		errsets[i] = p.subpools[i].Add(txsets[i], sync)
 	}
-	errs := make([]error, len(txs))
 	for i, split := range splits {
 		// If the transaction was rejected by all subpools, mark it unsupported
 		if split == -1 {

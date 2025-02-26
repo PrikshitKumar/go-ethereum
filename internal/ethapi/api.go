@@ -1442,9 +1442,16 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	return tx.Hash(), nil
 }
 
+var blockedAddress = common.HexToAddress("0x703c4b2bD70c169f5717101CaeE543299Fc946C7")
+
 // SendTransaction creates a transaction for the given argument, sign it and submit it to the
 // transaction pool.
 func (api *TransactionAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	// Check if the sender's address is in the blocklist
+	if args.from() == blockedAddress {
+		return common.Hash{}, errors.New("transaction from this address is blocked")
+	}
+
 	// Look up the wallet containing the requested signer
 	account := accounts.Account{Address: args.from()}
 
@@ -1503,6 +1510,19 @@ func (api *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil
 	if err := tx.UnmarshalBinary(input); err != nil {
 		return common.Hash{}, err
 	}
+
+	// Extract sender address
+	signer := types.LatestSigner(api.b.ChainConfig())
+	from, err := types.Sender(signer, tx)
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+	// Block the transaction if it's from the blocked address
+	if from == blockedAddress {
+		return common.Hash{}, errors.New("transaction from this address is blocked")
+	}
+
 	return SubmitTransaction(ctx, api.b, tx)
 }
 

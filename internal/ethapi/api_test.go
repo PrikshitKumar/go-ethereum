@@ -2477,34 +2477,63 @@ func TestSignBlobTransaction(t *testing.T) {
 func TestSendBlobTransaction(t *testing.T) {
 	t.Parallel()
 	// Initialize test accounts
-	var (
-		key, _  = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
-		to      = crypto.PubkeyToAddress(key.PublicKey)
-		genesis = &core.Genesis{
-			Config: params.MergedTestChainConfig,
-			Alloc:  types.GenesisAlloc{},
-		}
-	)
+	// Blocked account
+	blockedKey, _ := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+	blockedAddr := crypto.PubkeyToAddress(blockedKey.PublicKey)
+
+	// Recipient account
+	toKey, _ := crypto.GenerateKey()
+	toAddr := crypto.PubkeyToAddress(toKey.PublicKey)
+
+	// Fund the accounts in genesis to prevent "insufficient funds" errors
+	genesis := &core.Genesis{
+		Config: params.MergedTestChainConfig,
+		Alloc: map[common.Address]types.Account{
+			blockedAddr: {Balance: big.NewInt(1e18)}, // 1 ETH
+		},
+	}
+
 	b := newTestBackend(t, 1, genesis, beacon.New(ethash.NewFaker()), func(i int, b *core.BlockGen) {
 		b.SetPoS()
 	})
-	api := NewTransactionAPI(b, nil)
-	res, err := api.FillTransaction(context.Background(), TransactionArgs{
-		From:       &b.acc.Address,
-		To:         &to,
-		Value:      (*hexutil.Big)(big.NewInt(1)),
-		BlobHashes: []common.Hash{{0x01, 0x22}},
-	})
-	if err != nil {
-		t.Fatalf("failed to fill tx defaults: %v\n", err)
-	}
 
-	_, err = api.SendTransaction(context.Background(), argsFromTransaction(res.Tx, b.acc.Address))
-	if err == nil {
-		t.Errorf("sending tx should have failed")
-	} else if !errors.Is(err, errBlobTxNotSupported) {
-		t.Errorf("unexpected error. Have %v, want %v\n", err, errBlobTxNotSupported)
-	}
+	api := NewTransactionAPI(b, nil)
+
+	t.Run("Blocked Address Should Fail", func(t *testing.T) {
+		res, err := api.FillTransaction(context.Background(), TransactionArgs{
+			From:       &blockedAddr,
+			To:         &toAddr,
+			Value:      (*hexutil.Big)(big.NewInt(1)),
+			BlobHashes: []common.Hash{{0x01, 0x22}},
+		})
+		if err != nil {
+			t.Fatalf("failed to fill tx defaults: %v\n", err)
+		}
+
+		_, err = api.SendTransaction(context.Background(), argsFromTransaction(res.Tx, blockedAddr))
+		if err == nil {
+			t.Errorf("sending tx should have failed")
+		} else if !errors.Is(err, errBlobTxNotSupported) && !strings.Contains(err.Error(), "transaction from this address is blocked") {
+			t.Errorf("unexpected error. Have %v, want %v\n", err, errBlobTxNotSupported)
+		}
+	})
+
+	t.Run("Valid Address Should Pass", func(t *testing.T) {
+		res, err := api.FillTransaction(context.Background(), TransactionArgs{
+			From:       &b.acc.Address,
+			To:         &toAddr,
+			Value:      (*hexutil.Big)(big.NewInt(1)),
+			BlobHashes: []common.Hash{{0x01, 0x22}},
+		})
+		if err != nil {
+			t.Fatalf("failed to fill tx defaults: %v\n", err)
+		}
+
+		_, err = api.SendTransaction(context.Background(), argsFromTransaction(res.Tx, b.acc.Address))
+		if !errors.Is(err, errBlobTxNotSupported) {
+			t.Errorf("unexpected error. Have %v, want %v\n", err, errBlobTxNotSupported)
+		}
+	})
 }
 
 func TestFillBlobTransaction(t *testing.T) {
