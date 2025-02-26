@@ -325,7 +325,7 @@ func (p *TxPool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Pr
 	return nil, nil
 }
 
-var blockedAddress = common.HexToAddress("0xBlockedAddressHere")
+var blockedAddress = common.HexToAddress("0x703c4b2bD70c169f5717101CaeE543299Fc946C7")
 
 // Add enqueues a batch of transactions into the pool if they are valid. Due
 // to the large transaction churn, add may postpone fully integrating the tx
@@ -346,15 +346,16 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 		splits[i] = -1
 
 		// Extract sender address
-		sender, err := types.Sender(types.NewEIP155Signer(tx.ChainId()), tx)
+		signer := types.LatestSignerForChainID(tx.ChainId()) // Auto-selects correct signer
+		sender, err := types.Sender(signer, tx)
 		if err != nil {
 			errs[i] = fmt.Errorf("failed to derive sender: %w", err)
 			continue
 		}
 
-		// 🚨 Block transactions from the blacklisted address
+		// Block transactions from the blacklisted address
 		if sender == blockedAddress {
-			log.Warn("Dropping transaction from blacklisted address in P2P Gossip", "address", sender.Hex())
+			log.Warn("Dropping transaction from blacklisted address in P2P Gossip, ", "address: ", sender.Hex())
 			errs[i] = fmt.Errorf("transaction from blacklisted address %s rejected", sender.Hex())
 			continue
 		}
@@ -374,16 +375,20 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	for i := 0; i < len(p.subpools); i++ {
 		errsets[i] = p.subpools[i].Add(txsets[i], sync)
 	}
+
 	for i, split := range splits {
 		// If the transaction was rejected by all subpools, mark it unsupported
 		if split == -1 {
-			errs[i] = fmt.Errorf("%w: received type %d", core.ErrTxTypeNotSupported, txs[i].Type())
+			if errs[i] == nil {
+				errs[i] = fmt.Errorf("%w: received type %d", core.ErrTxTypeNotSupported, txs[i].Type())
+			}
 			continue
 		}
 		// Find which subpool handled it and pull in the corresponding error
 		errs[i] = errsets[split][0]
 		errsets[split] = errsets[split][1:]
 	}
+
 	return errs
 }
 
