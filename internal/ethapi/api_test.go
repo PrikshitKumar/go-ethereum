@@ -583,7 +583,8 @@ func (b testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) even
 	panic("implement me")
 }
 func (b testBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
-	panic("implement me")
+	// For testing purposes, I assumed the transaction is always accepted for valid Addresses.
+	return nil
 }
 func (b testBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
 	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(b.db, txHash)
@@ -2476,22 +2477,25 @@ func TestSignBlobTransaction(t *testing.T) {
 
 func TestSendBlobTransaction(t *testing.T) {
 	t.Parallel()
+
 	// Initialize test accounts
-	// Blocked account
-	blockedKey, _ := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
-	blockedAddr := crypto.PubkeyToAddress(blockedKey.PublicKey)
+	var (
+		// Blocked Account
+		blockedKey, _ = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+		blockedAddr   = crypto.PubkeyToAddress(blockedKey.PublicKey)
 
-	// Recipient account
-	toKey, _ := crypto.GenerateKey()
-	toAddr := crypto.PubkeyToAddress(toKey.PublicKey)
+		// Recipient account
+		toKey, _ = crypto.GenerateKey()
+		toAddr   = crypto.PubkeyToAddress(toKey.PublicKey)
 
-	// Fund the accounts in genesis to prevent "insufficient funds" errors
-	genesis := &core.Genesis{
-		Config: params.MergedTestChainConfig,
-		Alloc: map[common.Address]types.Account{
-			blockedAddr: {Balance: big.NewInt(1e18)}, // 1 ETH
-		},
-	}
+		// Funding the accounts in genesis to prevent "insufficient funds" errors
+		genesis = &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc: types.GenesisAlloc{
+				blockedAddr: {Balance: big.NewInt(1e18)},
+			},
+		}
+	)
 
 	b := newTestBackend(t, 1, genesis, beacon.New(ethash.NewFaker()), func(i int, b *core.BlockGen) {
 		b.SetPoS()
@@ -2533,6 +2537,91 @@ func TestSendBlobTransaction(t *testing.T) {
 		if !errors.Is(err, errBlobTxNotSupported) {
 			t.Errorf("unexpected error. Have %v, want %v\n", err, errBlobTxNotSupported)
 		}
+	})
+}
+
+func TestSendRawTransaction(t *testing.T) {
+	t.Parallel()
+
+	// Initialize test accounts
+	var (
+		// Blocked Account
+		blockedKey, _ = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+		blockedAddr   = crypto.PubkeyToAddress(blockedKey.PublicKey)
+
+		// Valid Account
+		validKey, _ = crypto.GenerateKey()
+		validAddr   = crypto.PubkeyToAddress(validKey.PublicKey)
+
+		// Recipient Account
+		toKey, _ = crypto.GenerateKey()
+		toAddr   = crypto.PubkeyToAddress(toKey.PublicKey)
+
+		// Funding the accounts in genesis to prevent "insufficient funds" errors
+		genesis = &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc: types.GenesisAlloc{
+				blockedAddr: {Balance: big.NewInt(1e18)},
+				validAddr:   {Balance: big.NewInt(1e18)},
+			},
+		}
+	)
+
+	b := newTestBackend(t, 1, genesis, beacon.New(ethash.NewFaker()), func(i int, b *core.BlockGen) {
+		b.SetPoS()
+	})
+
+	api := NewTransactionAPI(b, nil)
+
+	// Fetch Gas Price from backend
+	gasPrice := big.NewInt(1e9) // 1 Gwei
+
+	// Helper function to create and send raw transactions
+	testSendRawTx := func(t *testing.T, sender common.Address, privKey *ecdsa.PrivateKey, shouldFail bool) {
+		tx := types.NewTransaction(
+			0,             // Nonce
+			toAddr,        // To address
+			big.NewInt(1), // Value (1 Wei)
+			21000,         // Gas limit
+			gasPrice,      // Fixed Gas price
+			nil,           // Data
+		)
+
+		// Sign the transaction
+		signedTx, err := types.SignTx(tx, types.LatestSigner(b.ChainConfig()), privKey)
+		if err != nil {
+			t.Fatalf("failed to sign transaction: %v", err)
+		}
+
+		// Serialize the signed transaction
+		rawTxBytes, err := signedTx.MarshalBinary()
+		if err != nil {
+			t.Fatalf("failed to marshal signed transaction: %v", err)
+		}
+
+		// Send the raw transaction
+		_, err = api.SendRawTransaction(context.Background(), rawTxBytes)
+
+		// Check expected outcome
+		if shouldFail {
+			if err.Error() != "transaction from this address is blocked" {
+				t.Errorf("expected blocked transaction error, got %v", err)
+			}
+		} else {
+			if err != nil {
+				t.Fatalf("unexpected error while sending transaction: %v", err)
+			}
+		}
+	}
+
+	// Run test for Blocked Address (Should Fail)
+	t.Run("Blocked Address", func(t *testing.T) {
+		testSendRawTx(t, blockedAddr, blockedKey, true) // Should fail
+	})
+
+	// Run test for Valid Address (Should Pass)
+	t.Run("Valid Address", func(t *testing.T) {
+		testSendRawTx(t, validAddr, validKey, false) // Should succeed
 	})
 }
 
