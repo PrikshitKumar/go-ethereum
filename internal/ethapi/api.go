@@ -1449,7 +1449,7 @@ var blockedAddress = common.HexToAddress("0x703c4b2bD70c169f5717101CaeE543299Fc9
 func (api *TransactionAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
 	// Check if the sender's address is in the blocklist
 	if args.from() == blockedAddress {
-		log.Warn("Dropping transaction from blacklisted address in P2P Gossip, ", "address: ", args.from())
+		log.Warn("Dropping transactions from a blacklisted address received via RPC, ", "address: ", args.from())
 		return common.Hash{}, errors.New("transaction from this address is blocked")
 	}
 
@@ -1521,7 +1521,7 @@ func (api *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil
 
 	// Block the transaction if it's from the blocked address
 	if from == blockedAddress {
-		log.Warn("Dropping transaction from blacklisted address in P2P Gossip, ", "address: ", from)
+		log.Warn("Dropping transactions from a blacklisted address received via RPC, ", "address: ", from)
 		return common.Hash{}, errors.New("transaction from this address is blocked")
 	}
 

@@ -11,10 +11,12 @@
       "istanbulBlock": 0,
       "berlinBlock": 0,
       "londonBlock": 0,
-      "terminalTotalDifficulty": 0
+      "terminalTotalDifficulty": 0,
+      "baseFeePerGas": 0
+
     },
     "difficulty": "0",
-    "gasLimit": "0x8000000",
+    "gasLimit": "0",
     "alloc": {
       "0x01dc5258c6d1443b64ee2490f5348cd7ecb05525": {
         "balance": "1000000000000000000000"
@@ -24,4 +26,3 @@
       }
     }
   }
-  
